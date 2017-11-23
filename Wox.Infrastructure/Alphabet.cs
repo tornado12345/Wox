@@ -61,7 +61,7 @@ namespace Wox.Infrastructure
             {
                 if (!PinyinCache.ContainsKey(characters))
                 {
-                    Log.Info($"call PinyinComination: characters={characters}");
+                    Log.Info($"|Wox.Infrastructure.Alphabet.PinyinComination|call PinyinComination: characters={characters}");
                     var allPinyins = new List<string[]>();
                     foreach (var c in characters)
                     {
