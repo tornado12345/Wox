@@ -1,7 +1,7 @@
 WoX
 ===
 
-[![Build status](https://ci.appveyor.com/api/projects/status/bfktntbivg32e103?svg=true)](https://ci.appveyor.com/project/happlebao/wox)
+[![Build status](https://ci.appveyor.com/api/projects/status/bfktntbivg32e103/branch/master?svg=true)](https://ci.appveyor.com/project/happlebao/wox/branch/master)
 [![Github All Releases](https://img.shields.io/github/downloads/Wox-launcher/Wox/total.svg)](https://github.com/Wox-launcher/Wox/releases)
 [![RamenBless](https://cdn.rawgit.com/LunaGao/BlessYourCodeTag/master/tags/ramen.svg)](https://github.com/LunaGao/BlessYourCodeTag)
 
@@ -24,7 +24,7 @@ Features
 Installation
 ------------
 
-Download `Wox-xxx.exe` from [releases](https://github.com/Wox-launcher/Wox/releases). Latest as of now is [`1.3.183`](https://github.com/Wox-launcher/Wox/releases/download/v1.3.183/Wox-1.3.183.exe)
+Download `Wox-xxx.exe` from [releases](https://github.com/Wox-launcher/Wox/releases). Latest as of now is [`1.3.524`](https://github.com/Wox-launcher/Wox/releases/download/v1.3.524/Wox-1.3.524.exe) ([`1.3.578`](https://github.com/Wox-launcher/Wox/releases/download/v1.3.578/Wox-1.3.578.exe) for preview channel)
 
 Windows may complain about security due to code not being signed. This will be fixed later. 
 
