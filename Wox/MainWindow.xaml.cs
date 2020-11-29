@@ -5,6 +5,9 @@ using System.Windows.Input;
 using System.Windows.Media.Animation;
 using System.Windows.Controls;
 using System.Windows.Forms;
+
+using NLog;
+using Wox.Infrastructure.Logger;
 using Wox.Core.Plugin;
 using Wox.Core.Resource;
 using Wox.Helper;
@@ -18,25 +21,23 @@ using KeyEventArgs = System.Windows.Input.KeyEventArgs;
 using MessageBox = System.Windows.MessageBox;
 using NotifyIcon = System.Windows.Forms.NotifyIcon;
 
+
 namespace Wox
 {
     public partial class MainWindow
     {
 
-        #region Private Fields
-
         private readonly Storyboard _progressBarStoryboard = new Storyboard();
         private Settings _settings;
         private NotifyIcon _notifyIcon;
         private MainViewModel _viewModel;
+        private static readonly NLog.Logger Logger = LogManager.GetCurrentClassLogger();
 
-        #endregion
-
-        public MainWindow(Settings settings, MainViewModel mainVM)
+        public MainWindow(MainViewModel mainVM)
         {
             DataContext = mainVM;
             _viewModel = mainVM;
-            _settings = settings;
+            _settings = Settings.Instance;
             InitializeComponent();
         }
         public MainWindow()
@@ -52,12 +53,11 @@ namespace Wox
 
         private void OnInitialized(object sender, EventArgs e)
         {
-            // show notify icon when wox is hided
-            InitializeNotifyIcon();
         }
 
         private void OnLoaded(object sender, RoutedEventArgs _)
         {
+            InitializeNotifyIcon();
             // todo is there a way to set blur only once?
             ThemeManager.Instance.SetBlurForWindow();
             WindowsInteropHelper.DisableControlBox(this);
@@ -82,6 +82,19 @@ namespace Wox
                             QueryTextBox.SelectAll();
                             _viewModel.LastQuerySelected = true;
                         }
+                    }
+                    return;
+                }
+
+                if (e.PropertyName == nameof(MainViewModel.ProgressBarVisibility))
+                {
+                    if (_viewModel.ProgressBarVisibility == Visibility.Visible)
+                    {
+                        ProgressBar.BeginStoryboard(_progressBarStoryboard);
+                    }
+                    else
+                    {
+                        _progressBarStoryboard.Stop(ProgressBar);
                     }
                 }
             };
@@ -148,13 +161,23 @@ namespace Wox
             _progressBarStoryboard.Children.Add(da);
             _progressBarStoryboard.Children.Add(da1);
             _progressBarStoryboard.RepeatBehavior = RepeatBehavior.Forever;
-            ProgressBar.BeginStoryboard(_progressBarStoryboard);
             _viewModel.ProgressBarVisibility = Visibility.Hidden;
         }
 
         private void OnMouseDown(object sender, MouseButtonEventArgs e)
         {
-            if (e.ChangedButton == MouseButton.Left) DragMove();
+            if (e.ChangedButton == MouseButton.Left)
+            {
+                try
+                {
+                    DragMove();
+                }
+                catch (InvalidOperationException ex)
+                {
+                    // https://github.com/Wox-launcher/Wox/issues/811
+                    Logger.WoxError($"Cannot dray {ex.Message}");
+                }
+            }
         }
 
         private void OnPreviewMouseButtonDown(object sender, MouseButtonEventArgs e)

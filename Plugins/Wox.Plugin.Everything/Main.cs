@@ -5,9 +5,12 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Threading;
 using System.Windows;
 using System.Windows.Controls;
+using NLog;
 using Wox.Infrastructure;
+using Wox.Infrastructure.Logger;
 using Wox.Infrastructure.Storage;
 using Wox.Plugin.Everything.Everything;
 
@@ -15,14 +18,18 @@ namespace Wox.Plugin.Everything
 {
     public class Main : IPlugin, ISettingProvider, IPluginI18n, IContextMenu, ISavable
     {
-        private readonly EverythingAPI _api = new EverythingAPI();
 
         public const string DLL = "Everything.dll";
+        private readonly EverythingApi _api = new EverythingApi();
+
+
 
         private PluginInitContext _context;
 
         private Settings _settings;
         private PluginJsonStorage<Settings> _storage;
+        private CancellationTokenSource _updateSource;
+        private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
 
         public void Save()
         {
@@ -31,53 +38,31 @@ namespace Wox.Plugin.Everything
 
         public List<Result> Query(Query query)
         {
+            if (_updateSource != null && !_updateSource.IsCancellationRequested)
+            {
+                _updateSource.Cancel();
+                Logger.WoxDebug($"cancel init {_updateSource.Token.GetHashCode()} {Thread.CurrentThread.ManagedThreadId} {query.RawQuery}");
+                _updateSource.Dispose();
+            }
+            var source = new CancellationTokenSource();
+            _updateSource = source;
+            var token = source.Token;
+
             var results = new List<Result>();
             if (!string.IsNullOrEmpty(query.Search))
             {
                 var keyword = query.Search;
-                if (_settings.MaxSearchCount <= 0)
-                {
-                    _settings.MaxSearchCount = 50;
-                }
 
                 try
                 {
-                    var searchList = _api.Search(keyword, maxCount: _settings.MaxSearchCount).ToList();
-                    foreach (var s in searchList)
+                    if (token.IsCancellationRequested) { return results; }
+                    var searchList = _api.Search(keyword, token, _settings.MaxSearchCount);
+                    if (token.IsCancellationRequested) { return results; }
+                    for (int i = 0; i < searchList.Count; i++)
                     {
-                        var path = s.FullPath;
-
-                        string workingDir = null;
-                        if (_settings.UseLocationAsWorkingDir)
-                            workingDir = Path.GetDirectoryName(path);
-
-                        Result r = new Result();
-                        r.Title = Path.GetFileName(path);
-                        r.SubTitle = path;
-                        r.IcoPath = path;
-                        r.Action = c =>
-                        {
-                            bool hide;
-                            try
-                            {
-                                Process.Start(new ProcessStartInfo
-                                {
-                                    FileName = path,
-                                    UseShellExecute = true,
-                                    WorkingDirectory = workingDir
-                                });
-                                hide = true;
-                            }
-                            catch (Win32Exception)
-                            {
-                                var name = $"Plugin: {_context.CurrentPluginMetadata.Name}";
-                                var message = "Can't open this file";
-                                _context.API.ShowMsg(name, message, string.Empty);
-                                hide = false;
-                            }
-                            return hide;
-                        };
-                        r.ContextData = s;
+                        if (token.IsCancellationRequested) { return results; }
+                        SearchResult searchResult = searchList[i];
+                        var r = CreateResult(keyword, searchResult, i);
                         results.Add(r);
                     }
                 }
@@ -91,6 +76,7 @@ namespace Wox.Plugin.Everything
                 }
                 catch (Exception e)
                 {
+                    Logger.WoxError("Query Error", e);
                     results.Add(new Result
                     {
                         Title = _context.API.GetTranslation("wox_plugin_everything_query_error"),
@@ -106,13 +92,55 @@ namespace Wox.Plugin.Everything
                 }
             }
 
-            _api.Reset();
-
             return results;
         }
 
-        [DllImport("kernel32.dll")]
-        private static extern int LoadLibrary(string name);
+        private Result CreateResult(string keyword, SearchResult searchResult, int index)
+        {
+            var path = searchResult.FullPath;
+
+            string workingDir = null;
+            if (_settings.UseLocationAsWorkingDir)
+                workingDir = Path.GetDirectoryName(path);
+
+            var r = new Result
+            {
+                Score = _settings.MaxSearchCount - index,
+                Title = searchResult.FileName,
+                TitleHighlightData = searchResult.FileNameHightData,
+                SubTitle = searchResult.FullPath,
+                SubTitleHighlightData = searchResult.FullPathHightData,
+                IcoPath = searchResult.FullPath,
+                Action = c =>
+                {
+                    bool hide;
+                    try
+                    {
+                        Process.Start(new ProcessStartInfo
+                        {
+                            FileName = path,
+                            UseShellExecute = true,
+                            WorkingDirectory = workingDir
+                        });
+                        hide = true;
+                    }
+                    catch (Win32Exception)
+                    {
+                        var name = $"Plugin: {_context.CurrentPluginMetadata.Name}";
+                        var message = "Can't open this file";
+                        _context.API.ShowMsg(name, message, string.Empty);
+                        hide = false;
+                    }
+
+                    return hide;
+                },
+                ContextData = searchResult,
+                
+            };
+            return r;
+        }
+
+
 
         private List<ContextMenu> GetDefaultContextMenu()
         {
@@ -147,21 +175,31 @@ namespace Wox.Plugin.Everything
             _context = context;
             _storage = new PluginJsonStorage<Settings>();
             _settings = _storage.Load();
+            if (_settings.MaxSearchCount <= 0)
+            {
+                _settings.MaxSearchCount = Settings.DefaultMaxSearchCount;
+            }
 
             var pluginDirectory = context.CurrentPluginMetadata.PluginDirectory;
             const string sdk = "EverythingSDK";
-            var bundledSDKDirectory = Path.Combine(pluginDirectory, sdk, CpuType());
-            var sdkDirectory = Path.Combine(_storage.DirectoryPath, sdk, CpuType());
-            Helper.ValidateDataDirectory(bundledSDKDirectory, sdkDirectory);
-
+            var sdkDirectory = Path.Combine(pluginDirectory, sdk, CpuType());
             var sdkPath = Path.Combine(sdkDirectory, DLL);
+            Logger.WoxDebug($"sdk path <{sdkPath}>");
             Constant.EverythingSDKPath = sdkPath;
-            LoadLibrary(sdkPath);
+            _api.Load(sdkPath);
         }
 
         private static string CpuType()
         {
-            return Environment.Is64BitOperatingSystem ? "x64" : "x86";
+            if (!Environment.Is64BitProcess)
+            {
+                return "x86";
+            }
+            else
+            {
+                return "x64";
+            }
+            
         }
 
         public string GetTranslatedPluginTitle()

@@ -11,6 +11,8 @@ using System.Windows.Navigation;
 using Microsoft.Win32;
 using NHotkey;
 using NHotkey.Wpf;
+using Ookii.Dialogs.Wpf; // may be removed later https://github.com/dotnet/wpf/issues/438
+
 using Wox.Core;
 using Wox.Core.Plugin;
 using Wox.Core.Resource;
@@ -32,19 +34,13 @@ namespace Wox
         public SettingWindow(IPublicAPI api, SettingWindowViewModel viewModel)
         {
             InitializeComponent();
-            _settings = viewModel.Settings;
+            _settings = Settings.Instance;
             DataContext = viewModel;
             _viewModel = viewModel;
             _api = api;
         }
 
         #region General
-
-        void OnLanguageChanged(object sender, SelectionChangedEventArgs e)
-        {
-            var language = (Language)e.AddedItems[0];
-            InternationalizationManager.Instance.ChangeLanguage(language);
-        }
 
         private void OnAutoStartupChecked(object sender, RoutedEventArgs e)
         {
@@ -90,13 +86,13 @@ namespace Wox
 
         private void OnSelectPythonDirectoryClick(object sender, RoutedEventArgs e)
         {
-            var dlg = new System.Windows.Forms.FolderBrowserDialog
+            var dlg = new VistaFolderBrowserDialog()
             {
                 SelectedPath = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles)
             };
 
             var result = dlg.ShowDialog();
-            if (result == System.Windows.Forms.DialogResult.OK)
+            if (result == true)
             {
                 string pythonDirectory = dlg.SelectedPath;
                 if (!string.IsNullOrEmpty(pythonDirectory))
@@ -215,7 +211,8 @@ namespace Wox
         private void OnPluginToggled(object sender, RoutedEventArgs e)
         {
             var id = _viewModel.SelectedPlugin.PluginPair.Metadata.ID;
-            _settings.PluginSettings.Plugins[id].Disabled = _viewModel.SelectedPlugin.PluginPair.Metadata.Disabled;
+            // used to sync the current status from the plugin manager into the setting to keep consistency after save
+            _settings.PluginSettings.Plugins[id].Disabled = _viewModel.SelectedPlugin.PluginPair.Metadata.Disabled; 
         }
 
         private void OnPluginActionKeywordsClick(object sender, MouseButtonEventArgs e)
@@ -260,53 +257,16 @@ namespace Wox
         #region Proxy
 
         private void OnTestProxyClick(object sender, RoutedEventArgs e)
-        {
-            if (string.IsNullOrEmpty(_settings.Proxy.Server))
-            {
-                MessageBox.Show(InternationalizationManager.Instance.GetTranslation("serverCantBeEmpty"));
-                return;
-            }
-            if (_settings.Proxy.Port <= 0)
-            {
-                MessageBox.Show(InternationalizationManager.Instance.GetTranslation("portCantBeEmpty"));
-                return;
-            }
-
-            HttpWebRequest request = (HttpWebRequest)WebRequest.Create(Infrastructure.Constant.Repository);
-            if (string.IsNullOrEmpty(_settings.Proxy.UserName) || string.IsNullOrEmpty(_settings.Proxy.Password))
-            {
-                request.Proxy = new WebProxy(_settings.Proxy.Server, _settings.Proxy.Port);
-            }
-            else
-            {
-                request.Proxy = new WebProxy(_settings.Proxy.Server, _settings.Proxy.Port)
-                {
-                    Credentials = new NetworkCredential(_settings.Proxy.UserName, _settings.Proxy.Password)
-                };
-            }
-            try
-            {
-                var response = (HttpWebResponse)request.GetResponse();
-                if (response.StatusCode == HttpStatusCode.OK)
-                {
-                    MessageBox.Show(InternationalizationManager.Instance.GetTranslation("proxyIsCorrect"));
-                }
-                else
-                {
-                    MessageBox.Show(InternationalizationManager.Instance.GetTranslation("proxyConnectFailed"));
-                }
-            }
-            catch
-            {
-                MessageBox.Show(InternationalizationManager.Instance.GetTranslation("proxyConnectFailed"));
-            }
+        { // TODO: change to command
+            var msg = _viewModel.TestProxy();
+            MessageBox.Show(msg); // TODO: add message box service
         }
 
         #endregion
 
-        private async void OnCheckUpdates(object sender, RoutedEventArgs e)
+        private void OnCheckUpdates(object sender, RoutedEventArgs e)
         {
-            await Updater.UpdateApp();
+            _viewModel.UpdateApp(); // TODO: change to command
         }
 
         private void OnRequestNavigate(object sender, RequestNavigateEventArgs e)
@@ -318,6 +278,7 @@ namespace Wox
         private void OnClosed(object sender, EventArgs e)
         {
             _viewModel.Save();
+            PluginManager.Save();
         }
 
         private void OnCloseExecuted(object sender, ExecutedRoutedEventArgs e)

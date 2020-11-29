@@ -20,14 +20,15 @@
         "youtube",
         "bing",
         "yahoo",
-        "bd"
+        "bd",
+        "q"
     ],
     "Name": "Web Searches",
     "Description": "Provide the web search ability",
-    "Author": "qianlifeng",
+    "Author": "Wox",
     "Version": "1.0.0",
     "Language": "csharp",
-    "Website": "http://www.wox.one/plugin",
+    "Website": "https://github.com/Wox-launcher/Wox",
     "ExecuteFileName": "Wox.Plugin.WebSearch.dll",
     "IcoPath": "Images\\web_search.png"
 }

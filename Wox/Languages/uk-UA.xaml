@@ -26,6 +26,7 @@
     <system:String x:Key="ignoreHotkeysOnFullscreen">Ігнорувати гарячі клавіші в повноекранному режимі</system:String>
     <system:String x:Key="pythonDirectory">Директорія Python</system:String>
     <system:String x:Key="autoUpdates">Автоматичне оновлення</system:String>
+    <system:String x:Key="updateToPrereleases">Update to Prereleases</system:String>
     <system:String x:Key="selectPythonDirectory">Вибрати</system:String>
     <system:String x:Key="hideOnStartup">Сховати Wox при запуску системи</system:String>
 
@@ -45,6 +46,7 @@
     <system:String x:Key="helloWox">Привіт Wox</system:String>
     <system:String x:Key="queryBoxFont">Шрифт запитів</system:String>
     <system:String x:Key="resultItemFont">Шрифт результатів</system:String>
+    <system:String x:Key="resultItemHighlightFont">Result Item Highlight Font</system:String>
     <system:String x:Key="windowMode">Віконний режим</system:String>
     <system:String x:Key="opacity">Прозорість</system:String>
 
@@ -91,7 +93,7 @@
     <system:String x:Key="cannotFindSpecifiedPlugin">Не вдалося знайти вказаний плагін</system:String>
     <system:String x:Key="newActionKeywordsCannotBeEmpty">Нова гаряча клавіша не може бути порожньою</system:String>
     <system:String x:Key="newActionKeywordsHasBeenAssigned">Нова гаряча клавіша вже використовується іншим плагіном. Будь ласка, вкажіть нову</system:String>
-    <system:String x:Key="succeed">Збережено</system:String>
+    <system:String x:Key="success">Збережено</system:String>
     <system:String x:Key="actionkeyword_tips">Використовуйте * у разі, якщо ви не хочете ставити конкретну гарячу клавішу</system:String>
 
     <!--Custom Query Hotkey Dialog-->

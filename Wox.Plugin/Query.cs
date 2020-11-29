@@ -6,6 +6,19 @@ namespace Wox.Plugin
 {
     public class Query
     {
+        internal Query() { }
+
+        /// <summary>
+        /// to allow unit tests for plug ins
+        /// </summary>
+        public Query(string rawQuery, string search, string[] terms, string actionKeyword = "")
+        {
+            Search = search;
+            RawQuery = rawQuery;
+            Terms = terms;
+            ActionKeyword = actionKeyword;
+        }
+
         /// <summary>
         /// Raw query, this includes action keyword if it has
         /// We didn't recommend use this property directly. You should always use Search property.
@@ -82,13 +95,13 @@ namespace Wox.Plugin
 
         public override string ToString() => RawQuery;
 
-        [Obsolete("Use ActionKeyword, this property will be removed in v1.3.0")]
+        [Obsolete("Use ActionKeyword, this property will be removed in v1.4.0")]
         public string ActionName { get; internal set; }
 
-        [Obsolete("Use Search instead, this property will be removed in v1.3.0")]
+        [Obsolete("Use Search instead, this property will be removed in v1.4.0")]
         public List<string> ActionParameters { get; internal set; }
 
-        [Obsolete("Use Search instead, this method will be removed in v1.3.0")]
+        [Obsolete("Use Search instead, this method will be removed in v1.4.0")]
         public string GetAllRemainingParameter() => Search;
     }
 }

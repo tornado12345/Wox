@@ -1,10 +1,12 @@
-﻿using System;
+﻿using NLog;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using Wox.Infrastructure;
+using Wox.Infrastructure.Logger;
 
 namespace Wox.Plugin.ControlPanel
 {
@@ -15,26 +17,12 @@ namespace Wox.Plugin.ControlPanel
         private string iconFolder;
         private string fileType;
 
+        private static readonly NLog.Logger Logger = LogManager.GetCurrentClassLogger();
+
         public void Init(PluginInitContext context)
         {
             this.context = context;
-            controlPanelItems = ControlPanelList.Create(48);
-            iconFolder = Path.Combine(context.CurrentPluginMetadata.PluginDirectory, @"Images\ControlPanelIcons\");
-            fileType = ".bmp";
-
-            if (!Directory.Exists(iconFolder))
-            {
-                Directory.CreateDirectory(iconFolder);
-            }
-
-
-            foreach (ControlPanelItem item in controlPanelItems)
-            {
-                if (!File.Exists(iconFolder + item.GUID + fileType) && item.Icon != null)
-                {
-                    item.Icon.ToBitmap().Save(iconFolder + item.GUID + fileType);
-                }
-            }
+            controlPanelItems = ControlPanelList.Create();
         }
 
         public List<Result> Query(Query query)
@@ -43,55 +31,44 @@ namespace Wox.Plugin.ControlPanel
 
             foreach (var item in controlPanelItems)
             {
-                item.Score = Score(item, query.Search);
+                var titleMatch = StringMatcher.FuzzySearch(query.Search, item.LocalizedString);
+
+                item.Score = titleMatch.Score;
                 if (item.Score > 0)
                 {
                     var result = new Result
                     {
                         Title = item.LocalizedString,
+                        TitleHighlightData = titleMatch.MatchData,
                         SubTitle = item.InfoTip,
                         Score = item.Score,
-                        IcoPath = Path.Combine(context.CurrentPluginMetadata.PluginDirectory,
-                            @"Images\\ControlPanelIcons\\" + item.GUID + fileType),
+                        IcoPath = item.IconPath,
                         Action = e =>
                         {
                             try
                             {
                                 Process.Start(item.ExecutablePath);
                             }
-                            catch (Exception)
+                            catch (Exception ex)
                             {
-                                //Silently Fail for now.. todo
+                                ex.Data.Add(nameof(item.LocalizedString), item.LocalizedString);
+                                ex.Data.Add(nameof(item.ExecutablePath), item.ExecutablePath);
+                                ex.Data.Add(nameof(item.IconPath), item.IconPath);
+                                ex.Data.Add(nameof(item.GUID), item.GUID);
+                                Logger.WoxError($"cannot start control panel item {item.ExecutablePath}", ex);
                             }
                             return true;
                         }
                     };
+
+                    
+
                     results.Add(result);
                 }
             }
 
             List<Result> panelItems = results.OrderByDescending(o => o.Score).Take(5).ToList();
             return panelItems;
-        }
-
-        private int Score(ControlPanelItem item, string query)
-        {
-            var scores = new List<int> {0};
-            if (string.IsNullOrEmpty(item.LocalizedString))
-            {
-                var score1 = StringMatcher.Score(item.LocalizedString, query);
-                var score2 = StringMatcher.ScoreForPinyin(item.LocalizedString, query);
-                scores.Add(score1);
-                scores.Add(score2);
-            }
-            if (!string.IsNullOrEmpty(item.InfoTip))
-            {
-                var score1 = StringMatcher.Score(item.InfoTip, query);
-                var score2 = StringMatcher.ScoreForPinyin(item.InfoTip, query);
-                scores.Add(score1);
-                scores.Add(score2);
-            }
-            return scores.Max();
         }
 
         public string GetTranslatedPluginTitle()

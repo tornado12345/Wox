@@ -1,17 +1,20 @@
-﻿using System;
+using Microsoft.WindowsAPICodePack.Shell.Interop;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Net;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using Wox.Core;
+using Wox.Core.Configuration;
 using Wox.Core.Plugin;
 using Wox.Core.Resource;
 using Wox.Helper;
 using Wox.Infrastructure;
-using Wox.Infrastructure.Http;
 using Wox.Infrastructure.Storage;
 using Wox.Infrastructure.UserSettings;
 using Wox.Plugin;
@@ -20,12 +23,15 @@ namespace Wox.ViewModel
 {
     public class SettingWindowViewModel : BaseModel
     {
-        private readonly WoxJsonStorage<Settings> _storage;
+        private readonly Updater _updater;
+        private readonly IPortable _portable;
 
-        public SettingWindowViewModel()
+        public SettingWindowViewModel(IPortable portable)
         {
-            _storage = new WoxJsonStorage<Settings>();
-            Settings = _storage.Load();
+
+            _updater = new Updater(Wox.Properties.Settings.Default.GithubRepo); ;
+            _portable = portable;
+            Settings = Settings.Instance;
             Settings.PropertyChanged += (s, e) =>
             {
                 if (e.PropertyName == nameof(Settings.ActivateTimes))
@@ -33,16 +39,69 @@ namespace Wox.ViewModel
                     OnPropertyChanged(nameof(ActivatedTimes));
                 }
             };
-
-
+            AutoUpdates();
         }
 
         public Settings Settings { get; set; }
 
+        public async void UpdateApp()
+        {
+            if (PortableMode)
+            {
+                MessageBox.Show("Portable mode need check update manually in https://github.com/Wox-launcher/Wox/releases");
+            }
+            else
+            {
+                await _updater.UpdateApp(false, Settings.UpdateToPrereleases);
+            }
+        }
+
+        // This is only required to set at startup. When portable mode enabled/disabled a restart is always required
+        private bool _portableMode = DataLocation.PortableDataLocationInUse();
+        public bool PortableMode
+        {
+            get { return _portableMode; }
+            set
+            {
+                if (!_portable.CanUpdatePortability())
+                    return;
+
+                if (DataLocation.PortableDataLocationInUse())
+                {
+                    _portable.DisablePortableMode();
+                }
+                else
+                {
+                    _portable.EnablePortableMode();
+                }
+            }
+        }
+
+        private void AutoUpdates()
+        {
+            Task.Run(async () =>
+            {
+                if (Settings.Instance.AutoUpdates && !PortableMode)
+                {
+                    // check udpate every 5 hours
+                    var timer = new System.Timers.Timer(1000 * 60 * 60 * 5);
+                    timer.Elapsed += async (s, e) =>
+                    {
+                        await _updater.UpdateApp(true, Settings.Instance.UpdateToPrereleases);
+                    };
+                    timer.Start();
+
+                    // check updates on startup
+                    await _updater.UpdateApp(true, Settings.Instance.UpdateToPrereleases);
+                }
+            }).ContinueWith(ErrorReporting.UnhandledExceptionHandleTask, TaskContinuationOptions.OnlyOnFaulted);
+        }
+
+
 
         public void Save()
         {
-            _storage.Save();
+            Settings.Save();
         }
 
         #region general
@@ -70,9 +129,94 @@ namespace Wox.ViewModel
             }
         }
 
+        public string Language
+        {
+            get
+            {
+                return Settings.Language;
+            }
+            set
+            {
+                InternationalizationManager.Instance.ChangeLanguage(value);
+
+                if (InternationalizationManager.Instance.PromptShouldUsePinyin(value))
+                    ShouldUsePinyin = true;
+            }
+        }
+
+        public bool ShouldUsePinyin
+        {
+            get
+            {
+                return Settings.ShouldUsePinyin;
+            }
+            set
+            {
+                Settings.ShouldUsePinyin = value;
+            }
+        }
+
+        public List<string> QuerySearchPrecisionStrings
+        {
+            get
+            {
+                var precisionStrings = new List<string>();
+
+                var enumList = Enum.GetValues(typeof(StringMatcher.SearchPrecisionScore)).Cast<StringMatcher.SearchPrecisionScore>().ToList();
+
+                enumList.ForEach(x => precisionStrings.Add(x.ToString()));
+
+                return precisionStrings;
+            }
+        }
+
         private Internationalization _translater => InternationalizationManager.Instance;
         public List<Language> Languages => _translater.LoadAvailableLanguages();
         public IEnumerable<int> MaxResultsRange => Enumerable.Range(2, 16);
+
+        public string TestProxy()
+        {
+            var proxyServer = Settings.Proxy.Server;
+            var proxyUserName = Settings.Proxy.UserName;
+            if (string.IsNullOrEmpty(proxyServer))
+            {
+                return InternationalizationManager.Instance.GetTranslation("serverCantBeEmpty");
+            }
+            if (Settings.Proxy.Port <= 0)
+            {
+                return InternationalizationManager.Instance.GetTranslation("portCantBeEmpty");
+            }
+
+            HttpWebRequest request = (HttpWebRequest)WebRequest.Create(_updater.GitHubRepository);
+
+            if (string.IsNullOrEmpty(proxyUserName) || string.IsNullOrEmpty(Settings.Proxy.Password))
+            {
+                request.Proxy = new WebProxy(proxyServer, Settings.Proxy.Port);
+            }
+            else
+            {
+                request.Proxy = new WebProxy(proxyServer, Settings.Proxy.Port)
+                {
+                    Credentials = new NetworkCredential(proxyUserName, Settings.Proxy.Password)
+                };
+            }
+            try
+            {
+                var response = (HttpWebResponse)request.GetResponse();
+                if (response.StatusCode == HttpStatusCode.OK)
+                {
+                    return InternationalizationManager.Instance.GetTranslation("proxyIsCorrect");
+                }
+                else
+                {
+                    return InternationalizationManager.Instance.GetTranslation("proxyConnectFailed");
+                }
+            }
+            catch
+            {
+                return InternationalizationManager.Instance.GetTranslation("proxyConnectFailed");
+            }
+        }
 
         #endregion
 
@@ -85,26 +229,11 @@ namespace Wox.ViewModel
         {
             get
             {
-                var plugins = PluginManager.AllPlugins;
-                var settings = Settings.PluginSettings.Plugins;
-                plugins.Sort((a, b) =>
-                {
-                    var d1 = settings[a.Metadata.ID].Disabled;
-                    var d2 = settings[b.Metadata.ID].Disabled;
-                    if (d1 == d2)
-                    {
-                        return string.Compare(a.Metadata.Name, b.Metadata.Name, StringComparison.CurrentCulture);
-                    }
-                    else
-                    {
-                        return d1.CompareTo(d2);
-                    }
-                });
-
-                var metadatas = plugins.Select(p => new PluginViewModel
-                {
-                    PluginPair = p,
-                }).ToList();
+                var metadatas = PluginManager.AllPlugins
+                    .OrderBy(x => x.Metadata.Disabled)
+                    .ThenBy(y => y.Metadata.Name)
+                    .Select(p => new PluginViewModel { PluginPair = p })
+                    .ToList();
                 return metadatas;
             }
         }
@@ -182,35 +311,41 @@ namespace Wox.ViewModel
                     new Result
                     {
                         Title = "WoX is a launcher for Windows that simply works.",
-                        SubTitle = "You can call it Windows omni-eXecutor if you want a long name."
+                        SubTitle = "You can call it Windows omni-eXecutor if you want a long name.",
+                        IcoPath = "Images/app.png"
                     },
                     new Result
                     {
                         Title = "Search for everything—applications, folders, files and more.",
-                        SubTitle = "Use pinyin to search for programs. (yyy / wangyiyun → 网易云音乐)"
+                        SubTitle = "Use pinyin to search for programs. (yyy / wangyiyun → 网易云音乐)",
+                        IcoPath = "Images/search.png"
                     },
                     new Result
                     {
                         Title = "Keyword plugin search.",
-                        SubTitle = "search google with g search_term."
+                        SubTitle = "search google with g search_term.",
+                        IcoPath = "Images/browser.png"
                     },
                     new Result
                     {
                         Title = "Build custom themes at: ",
-                        SubTitle = Theme
+                        SubTitle = Theme,
+                        IcoPath = "Images/color.png"
                     },
                     new Result
                     {
                         Title = "Install plugins from: ",
-                        SubTitle = Plugin
+                        SubTitle = Plugin,
+                        IcoPath = "Images/plugin.png"
                     },
                     new Result
                     {
-                        Title = $"Open Source: {Constant.Repository}",
-                        SubTitle = "Please star it!"
+                        Title = $"Open Source: {_updater.GitHubRepository}",
+                        SubTitle = "Please star it!",
+                        IcoPath = "Images/ok.png"
                     }
                 };
-                var vm = new ResultsViewModel();
+                var vm = new ResultsViewModel(Settings);
                 vm.AddResults(results, "PREVIEW");
                 return vm;
             }
@@ -290,7 +425,7 @@ namespace Wox.ViewModel
             get
             {
                 var typeface = SyntaxSugars.CallOrRescueDefault(
-                    () => SelectedQueryBoxFont.ConvertFromInvariantStringsOrNormal(
+                    () => SelectedResultFont.ConvertFromInvariantStringsOrNormal(
                         Settings.ResultFontStyle,
                         Settings.ResultFontWeight,
                         Settings.ResultFontStretch
@@ -306,6 +441,27 @@ namespace Wox.ViewModel
             }
         }
 
+        public FamilyTypeface SelectedResultHighlightFontFaces
+        {
+            get
+            {
+                var typeface = SyntaxSugars.CallOrRescueDefault(
+                    () => SelectedResultFont.ConvertFromInvariantStringsOrNormal(
+                        Settings.ResultHighlightFontStyle,
+                        Settings.ResultHighlightFontWeight,
+                        Settings.ResultHighlightFontStretch
+                        ));
+                return typeface;
+            }
+            set
+            {
+                Settings.ResultHighlightFontStretch = value.Stretch.ToString();
+                Settings.ResultHighlightFontWeight = value.Weight.ToString();
+                Settings.ResultHighlightFontStyle = value.Style.ToString();
+                ThemeManager.Instance.ChangeTheme(Settings.Theme);
+            }
+        }
+
         #endregion
 
         #region hotkey
@@ -316,8 +472,8 @@ namespace Wox.ViewModel
 
         #region about
 
-        public static string Github => Constant.Repository;
-        public static string ReleaseNotes => @"https://github.com/Wox-launcher/Wox/releases/latest";
+        public string Github => _updater.GitHubRepository;
+        public string ReleaseNotes => _updater.GitHubRepository + @"/releases/latest";
         public static string Version => Constant.Version;
         public string ActivatedTimes => string.Format(_translater.GetTranslation("about_activate_times"), Settings.ActivateTimes);
         #endregion

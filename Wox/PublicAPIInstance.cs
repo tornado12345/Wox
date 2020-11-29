@@ -2,15 +2,17 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Net;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using Squirrel;
+using Wox.Core;
 using Wox.Core.Plugin;
 using Wox.Core.Resource;
 using Wox.Helper;
 using Wox.Infrastructure;
 using Wox.Infrastructure.Hotkey;
-using Wox.Infrastructure.Image;
+using Wox.Image;
 using Wox.Plugin;
 using Wox.ViewModel;
 
@@ -29,7 +31,6 @@ namespace Wox
             _mainVM = mainVM;
             GlobalHotkey.Instance.hookedKeyboardCallback += KListener_hookedKeyboardCallback;
             WebRequest.RegisterPrefix("data", new DataWebRequestFactory());
-
         }
 
         #endregion
@@ -59,13 +60,26 @@ namespace Wox
             // we must manually save
             // UpdateManager.RestartApp() will call Environment.Exit(0)
             // which will cause ungraceful exit
+            SaveAppAllSettings();
+
+            UpdateManager.RestartApp();
+        }
+
+        public void CheckForNewUpdate()
+        {
+            _settingsVM.UpdateApp();
+        }
+
+        public void SaveAppAllSettings()
+        {
             _mainVM.Save();
             _settingsVM.Save();
             PluginManager.Save();
-            ImageLoader.Save();
-            Alphabet.Save();
+        }
 
-            UpdateManager.RestartApp();
+        public void ReloadAllPluginData()
+        {
+            PluginManager.ReloadData();
         }
 
         [Obsolete]
@@ -82,10 +96,15 @@ namespace Wox
 
         public void ShowMsg(string title, string subTitle = "", string iconPath = "")
         {
+            ShowMsg(title, subTitle, iconPath, true);
+        }
+
+        public void ShowMsg(string title, string subTitle, string iconPath, bool useMainWindowAsOwner = true)
+        {
             Application.Current.Dispatcher.Invoke(() =>
             {
-                var m = new Msg { Owner = Application.Current.MainWindow };
-                m.Show(title, subTitle, iconPath);
+                var msg = useMainWindowAsOwner ? new Msg {Owner = Application.Current.MainWindow} : new Msg();
+                msg.Show(title, subTitle, iconPath);
             });
         }
 
@@ -104,7 +123,7 @@ namespace Wox
 
         public void StopLoadingBar()
         {
-            _mainVM.ProgressBarVisibility = Visibility.Collapsed;
+            _mainVM.ProgressBarVisibility = Visibility.Hidden;
         }
 
         public void InstallPlugin(string path)
@@ -124,7 +143,7 @@ namespace Wox
 
         public event WoxGlobalKeyboardEventHandler GlobalKeyboardEvent;
 
-        [Obsolete("This will be removed in Wox 1.3")]
+        [Obsolete("This will be removed in Wox 1.4")]
         public void PushResults(Query query, PluginMetadata plugin, List<Result> results)
         {
             results.ForEach(o =>
@@ -135,7 +154,9 @@ namespace Wox
             });
             Task.Run(() =>
             {
-                _mainVM.UpdateResultView(results, plugin, query);
+
+                var t = new CancellationTokenSource().Token;
+                _mainVM.UpdateResultView(results, plugin, query, t);
             });
         }
 

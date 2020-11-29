@@ -2,7 +2,7 @@
 using System.Collections.Generic;
 using System.IO;
 using Newtonsoft.Json;
-using PropertyChanged;
+
 namespace Wox.Plugin
 {
     [JsonObject(MemberSerialization.OptOut)]
@@ -38,6 +38,9 @@ namespace Wox.Plugin
 
         public string IcoPath { get; set;}
 
+        // keep plugin raw score by not multiply selected counts
+        public bool KeepResultRawScore { get; set; }
+
         public override string ToString()
         {
             return Name;
@@ -46,6 +49,9 @@ namespace Wox.Plugin
         [Obsolete("Use IcoPath")]
         public string FullIcoPath => IcoPath;
 
+        /// <summary>
+        /// Init time include both plugin load time and init time
+        /// </summary>
         [JsonIgnore]
         public long InitTime { get; set; }
         [JsonIgnore]

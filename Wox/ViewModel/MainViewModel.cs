@@ -1,19 +1,24 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Input;
+using System.Collections.Concurrent;
+
 using NHotkey;
 using NHotkey.Wpf;
+using NLog;
+
 using Wox.Core.Plugin;
 using Wox.Core.Resource;
 using Wox.Helper;
 using Wox.Infrastructure;
 using Wox.Infrastructure.Hotkey;
-using Wox.Infrastructure.Image;
+using Wox.Infrastructure.Logger;
 using Wox.Infrastructure.Storage;
 using Wox.Infrastructure.UserSettings;
 using Wox.Plugin;
@@ -25,7 +30,6 @@ namespace Wox.ViewModel
     {
         #region Private Fields
 
-        private bool _queryHasReturn;
         private Query _lastQuery;
         private string _queryTextBeforeLeaveResults;
 
@@ -36,25 +40,27 @@ namespace Wox.ViewModel
         private readonly History _history;
         private readonly UserSelectedRecord _userSelectedRecord;
         private readonly TopMostRecord _topMostRecord;
+        private BlockingCollection<ResultsForUpdate> _resultsQueue;
 
         private CancellationTokenSource _updateSource;
-        private CancellationToken _updateToken;
         private bool _saved;
 
-        private Internationalization _translator = InternationalizationManager.Instance;
+        private readonly Internationalization _translator;
+
+        private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
 
         #endregion
 
         #region Constructor
 
-        public MainViewModel(Settings settings)
+        public MainViewModel(bool useUI = true)
         {
             _saved = false;
             _queryTextBeforeLeaveResults = "";
             _queryText = "";
             _lastQuery = new Query();
 
-            _settings = settings;
+            _settings = Settings.Instance;
 
             _historyItemsStorage = new WoxJsonStorage<History>();
             _userSelectedRecordStorage = new WoxJsonStorage<UserSelectedRecord>();
@@ -68,11 +74,58 @@ namespace Wox.ViewModel
             History = new ResultsViewModel(_settings);
             _selectedResults = Results;
 
-            InitializeKeyCommands();
-            RegisterResultsUpdatedEvent();
+            if (useUI)
+            {
+                _translator = InternationalizationManager.Instance;
+                InitializeKeyCommands();
+                RegisterResultsUpdatedEvent();
 
-            SetHotkey(_settings.Hotkey, OnHotkey);
-            SetCustomPluginHotkey();
+                SetHotkey(_settings.Hotkey, OnHotkey);
+                SetCustomPluginHotkey();
+            }
+
+            RegisterResultConsume();
+        }
+
+        private void RegisterResultConsume()
+        {
+            _resultsQueue = new BlockingCollection<ResultsForUpdate>();
+            Task.Run(() =>
+            {
+                while (true)
+                {
+                    ResultsForUpdate first = _resultsQueue.Take();
+                    List<ResultsForUpdate> updates = new List<ResultsForUpdate>() { first };
+
+                    DateTime startTime = DateTime.Now;
+                    int timeout = 50;
+                    DateTime takeExpired = startTime.AddMilliseconds(timeout / 10);
+
+                    ResultsForUpdate tempUpdate;
+                    while (_resultsQueue.TryTake(out tempUpdate) && DateTime.Now < takeExpired)
+                    {
+                        updates.Add(tempUpdate);
+                    }
+
+
+                    UpdateResultView(updates);
+
+                    DateTime currentTime = DateTime.Now;
+                    Logger.WoxTrace($"start {startTime.Millisecond} end {currentTime.Millisecond}");
+                    foreach (var update in updates)
+                    {
+                        Logger.WoxTrace($"update name:{update.Metadata.Name} count:{update.Results.Count} query:{update.Query} token:{update.Token.IsCancellationRequested}");
+                        update.Countdown.Signal();
+                    }
+                    DateTime viewExpired = startTime.AddMilliseconds(timeout);
+                    if (currentTime < viewExpired)
+                    {
+                        TimeSpan span = viewExpired - currentTime;
+                        Logger.WoxTrace($"expired { viewExpired.Millisecond} span {span.TotalMilliseconds}");
+                        Thread.Sleep(span);
+                    }
+                }
+            }).ContinueWith(ErrorReporting.UnhandledExceptionHandleTask, TaskContinuationOptions.OnlyOnFaulted);
         }
 
         private void RegisterResultsUpdatedEvent()
@@ -82,11 +135,19 @@ namespace Wox.ViewModel
                 var plugin = (IResultUpdated)pair.Plugin;
                 plugin.ResultsUpdated += (s, e) =>
                 {
-                    Task.Run(() =>
+                    if (!_updateSource.IsCancellationRequested)
                     {
-                        PluginManager.UpdatePluginMetadata(e.Results, pair.Metadata, e.Query);
-                        UpdateResultView(e.Results, pair.Metadata, e.Query);
-                    }, _updateToken);
+                        CancellationToken token = _updateSource.Token;
+                        // todo async update don't need count down
+                        // init with 1 since every ResultsForUpdate will be countdown.signal()
+                        CountdownEvent countdown = new CountdownEvent(1);
+                        Task.Run(() =>
+                        {
+                            if (token.IsCancellationRequested) { return; }
+                            PluginManager.UpdatePluginMetadata(e.Results, pair.Metadata, e.Query);
+                            _resultsQueue.Add(new ResultsForUpdate(e.Results, pair.Metadata, e.Query, token, countdown));
+                        }, token);
+                    }
                 };
             }
         }
@@ -96,7 +157,7 @@ namespace Wox.ViewModel
         {
             EscCommand = new RelayCommand(_ =>
             {
-                if (!ResultsSelected())
+                if (!SelectedIsFromQueryResults())
                 {
                     SelectedResults = Results;
                 }
@@ -126,10 +187,14 @@ namespace Wox.ViewModel
                 SelectedResults.SelectPrevPage();
             });
 
+            SelectFirstResultCommand = new RelayCommand(_ => SelectedResults.SelectFirstResult());
+
             StartHelpCommand = new RelayCommand(_ =>
             {
-                Process.Start("http://doc.getwox.com");
+                Process.Start("http://doc.wox.one/");
             });
+
+            RefreshCommand = new RelayCommand(_ => Refresh());
 
             OpenResultCommand = new RelayCommand(index =>
             {
@@ -153,17 +218,21 @@ namespace Wox.ViewModel
                         MainWindowVisibility = Visibility.Collapsed;
                     }
 
-                    if (ResultsSelected())
+                    if (SelectedIsFromQueryResults())
                     {
                         _userSelectedRecord.Add(result);
                         _history.Add(result.OriginQuery.RawQuery);
+                    }
+                    else
+                    {
+                        SelectedResults = Results;
                     }
                 }
             });
 
             LoadContextMenuCommand = new RelayCommand(_ =>
             {
-                if (ResultsSelected())
+                if (SelectedIsFromQueryResults())
                 {
                     SelectedResults = ContextMenu;
                 }
@@ -175,7 +244,7 @@ namespace Wox.ViewModel
 
             LoadHistoryCommand = new RelayCommand(_ =>
             {
-                if (ResultsSelected())
+                if (SelectedIsFromQueryResults())
                 {
                     SelectedResults = History;
                     History.SelectedIndex = _history.Items.Count - 1;
@@ -226,7 +295,7 @@ namespace Wox.ViewModel
             set
             {
                 _selectedResults = value;
-                if (ResultsSelected())
+                if (SelectedIsFromQueryResults())
                 {
                     ContextMenu.Visbility = Visibility.Collapsed;
                     History.Visbility = Visibility.Collapsed;
@@ -264,7 +333,9 @@ namespace Wox.ViewModel
         public ICommand SelectPrevItemCommand { get; set; }
         public ICommand SelectNextPageCommand { get; set; }
         public ICommand SelectPrevPageCommand { get; set; }
+        public ICommand SelectFirstResultCommand { get; set; }
         public ICommand StartHelpCommand { get; set; }
+        public ICommand RefreshCommand { get; set; }
         public ICommand LoadContextMenuCommand { get; set; }
         public ICommand LoadHistoryCommand { get; set; }
         public ICommand OpenResultCommand { get; set; }
@@ -273,7 +344,7 @@ namespace Wox.ViewModel
 
         public void Query()
         {
-            if (ResultsSelected())
+            if (SelectedIsFromQueryResults())
             {
                 QueryResults();
             }
@@ -305,8 +376,8 @@ namespace Wox.ViewModel
                 {
                     var filtered = results.Where
                     (
-                        r => StringMatcher.IsMatch(r.Title, query) ||
-                             StringMatcher.IsMatch(r.SubTitle, query)
+                        r => StringMatcher.FuzzySearch(query, r.Title).IsSearchPrecisionScoreMet()
+                            || StringMatcher.FuzzySearch(query, r.SubTitle).IsSearchPrecisionScoreMet()
                     ).ToList();
                     ContextMenu.AddResults(filtered, id);
                 }
@@ -348,8 +419,8 @@ namespace Wox.ViewModel
             {
                 var filtered = results.Where
                 (
-                    r => StringMatcher.IsMatch(r.Title, query) ||
-                         StringMatcher.IsMatch(r.SubTitle, query)
+                    r => StringMatcher.FuzzySearch(query, r.Title).IsSearchPrecisionScoreMet() ||
+                         StringMatcher.FuzzySearch(query, r.SubTitle).IsSearchPrecisionScoreMet()
                 ).ToList();
                 History.AddResults(filtered, id);
             }
@@ -361,71 +432,115 @@ namespace Wox.ViewModel
 
         private void QueryResults()
         {
-            if (!string.IsNullOrEmpty(QueryText))
+            if (_updateSource != null && !_updateSource.IsCancellationRequested)
             {
-                _updateSource?.Cancel();
-                _updateSource = new CancellationTokenSource();
-                _updateToken = _updateSource.Token;
+                // first condition used for init run
+                // second condition used when task has already been canceled in last turn
+                _updateSource.Cancel();
+                Logger.WoxDebug($"cancel init {_updateSource.Token.GetHashCode()} {Thread.CurrentThread.ManagedThreadId} {QueryText}");
+                _updateSource.Dispose();
+            }
+            var source = new CancellationTokenSource();
+            _updateSource = source;
+            var token = source.Token;
 
-                ProgressBarVisibility = Visibility.Hidden;
-                _queryHasReturn = false;
-                var query = PluginManager.QueryInit(QueryText.Trim());
-                if (query != null)
+            ProgressBarVisibility = Visibility.Hidden;
+
+            var queryText = QueryText.Trim();
+            Task.Run(() =>
+            {
+                if (!string.IsNullOrEmpty(queryText))
                 {
-                    // handle the exclusiveness of plugin using action keyword
-                    string lastKeyword = _lastQuery.ActionKeyword;
-                    string keyword = query.ActionKeyword;
-                    if (string.IsNullOrEmpty(lastKeyword))
-                    {
-                        if (!string.IsNullOrEmpty(keyword))
-                        {
-                            Results.RemoveResultsExcept(PluginManager.NonGlobalPlugins[keyword].Metadata);
-                        }
-                    }
-                    else
-                    {
-                        if (string.IsNullOrEmpty(keyword))
-                        {
-                            Results.RemoveResultsFor(PluginManager.NonGlobalPlugins[lastKeyword].Metadata);
-                        }
-                        else if (lastKeyword != keyword)
-                        {
-                            Results.RemoveResultsExcept(PluginManager.NonGlobalPlugins[keyword].Metadata);
-                        }
-                    }
-
+                    if (token.IsCancellationRequested) { return; }
+                    var query = QueryBuilder.Build(queryText, PluginManager.NonGlobalPlugins);
                     _lastQuery = query;
-                    Task.Delay(200, _updateToken).ContinueWith(_ =>
+                    if (query != null)
                     {
-                        if (query.RawQuery == _lastQuery.RawQuery && !_queryHasReturn)
-                        {
-                            ProgressBarVisibility = Visibility.Visible;
-                        }
-                    }, _updateToken);
+                        // handle the exclusiveness of plugin using action keyword
+                        if (token.IsCancellationRequested) { return; }
 
-                    var plugins = PluginManager.ValidPluginsForQuery(query);
-                    Task.Run(() =>
-                    {
-                        Parallel.ForEach(plugins, plugin =>
+                        Task.Delay(200, token).ContinueWith(_ =>
                         {
-                            var config = _settings.PluginSettings.Plugins[plugin.Metadata.ID];
-                            if (!config.Disabled)
+                            Logger.WoxTrace($"progressbar visible 1 {token.GetHashCode()} {token.IsCancellationRequested}  {Thread.CurrentThread.ManagedThreadId}  {query} {ProgressBarVisibility}");
+                            // start the progress bar if query takes more than 200 ms
+                            if (!token.IsCancellationRequested)
                             {
+                                ProgressBarVisibility = Visibility.Visible;
+                            }
+                        }, token);
 
+
+                        if (token.IsCancellationRequested) { return; }
+                        var plugins = PluginManager.AllPlugins;
+
+                        var option = new ParallelOptions()
+                        {
+                            CancellationToken = token,
+                        };
+                        CountdownEvent countdown = new CountdownEvent(plugins.Count);
+
+                        foreach (var plugin in plugins)
+                        {
+                            Task.Run(() =>
+                            {
+                                if (token.IsCancellationRequested)
+                                {
+                                    Logger.WoxTrace($"canceled {token.GetHashCode()} {Thread.CurrentThread.ManagedThreadId}  {queryText} {plugin.Metadata.Name}");
+                                    countdown.Signal();
+                                    return;
+                                }
                                 var results = PluginManager.QueryForPlugin(plugin, query);
-                                UpdateResultView(results, plugin.Metadata, query);
+                                if (token.IsCancellationRequested)
+                                {
+                                    Logger.WoxTrace($"canceled {token.GetHashCode()} {Thread.CurrentThread.ManagedThreadId}  {queryText} {plugin.Metadata.Name}");
+                                    countdown.Signal();
+                                    return;
+                                }
+
+                                _resultsQueue.Add(new ResultsForUpdate(results, plugin.Metadata, query, token, countdown));
+                            }, token).ContinueWith(ErrorReporting.UnhandledExceptionHandleTask, TaskContinuationOptions.OnlyOnFaulted);
+                        }
+
+                        Task.Run(() =>
+                        {
+                            Logger.WoxTrace($"progressbar visible 2 {token.GetHashCode()} {token.IsCancellationRequested}  {Thread.CurrentThread.ManagedThreadId}  {query} {ProgressBarVisibility}");
+                            // wait all plugins has been processed
+                            try
+                            {
+                                countdown.Wait(token);
+                            }
+                            catch (OperationCanceledException)
+                            {
+                                // todo: why we need hidden here and why progress bar is not working
+                                ProgressBarVisibility = Visibility.Hidden;
+                                return;
+                            }
+                            if (!token.IsCancellationRequested)
+                            {
+                                // used to cancel previous progress bar visible task
+                                source.Cancel();
+                                source.Dispose();
+                                // update to hidden if this is still the current query
+                                ProgressBarVisibility = Visibility.Hidden;
                             }
                         });
-                    }, _updateToken);
+
+
+                    }
                 }
-            }
-            else
-            {
-                Results.Clear();
-                Results.Visbility = Visibility.Collapsed;
-            }
+                else
+                {
+                    Results.Clear();
+                    Results.Visbility = Visibility.Collapsed;
+                }
+            }, token).ContinueWith(ErrorReporting.UnhandledExceptionHandleTask, TaskContinuationOptions.OnlyOnFaulted);
+
         }
 
+        private void Refresh()
+        {
+            PluginManager.ReloadData();
+        }
 
         private Result ContextMenuTopMost(Result result)
         {
@@ -440,7 +555,7 @@ namespace Wox.ViewModel
                     Action = _ =>
                     {
                         _topMostRecord.Remove(result);
-                        App.API.ShowMsg("Succeed");
+                        App.API.ShowMsg("Success");
                         return false;
                     }
                 };
@@ -455,7 +570,7 @@ namespace Wox.ViewModel
                     Action = _ =>
                     {
                         _topMostRecord.AddOrUpdate(result);
-                        App.API.ShowMsg("Succeed");
+                        App.API.ShowMsg("Success");
                         return false;
                     }
                 };
@@ -487,7 +602,7 @@ namespace Wox.ViewModel
             return menu;
         }
 
-        private bool ResultsSelected()
+        private bool SelectedIsFromQueryResults()
         {
             var selected = SelectedResults == Results;
             return selected;
@@ -619,32 +734,45 @@ namespace Wox.ViewModel
             }
         }
 
+        public void UpdateResultView(List<Result> list, PluginMetadata metadata, Query originQuery, CancellationToken token)
+        {
+            CountdownEvent countdown = new CountdownEvent(1);
+            List<ResultsForUpdate> updates = new List<ResultsForUpdate>()
+            {
+                new ResultsForUpdate(list, metadata, originQuery, token, countdown)
+            };
+            UpdateResultView(updates);
+        }
+
         /// <summary>
         /// To avoid deadlock, this method should not called from main thread
         /// </summary>
-        public void UpdateResultView(List<Result> list, PluginMetadata metadata, Query originQuery)
+        public void UpdateResultView(List<ResultsForUpdate> updates)
         {
-            _queryHasReturn = true;
-            ProgressBarVisibility = Visibility.Hidden;
-
-            foreach (var result in list)
+            foreach (ResultsForUpdate update in updates)
             {
-                if (_topMostRecord.IsTopMost(result))
+                Logger.WoxTrace($"{update.Metadata.Name}:{update.Query.RawQuery}");
+                foreach (var result in update.Results)
                 {
-                    result.Score = int.MaxValue;
-                }
-                else
-                {
-                    result.Score += _userSelectedRecord.GetSelectedCount(result) * 5;
+                    if (update.Token.IsCancellationRequested) { return; }
+                    if (_topMostRecord.IsTopMost(result))
+                    {
+                        result.Score = int.MaxValue;
+                    }
+                    else if (!update.Metadata.KeepResultRawScore)
+                    {
+                        result.Score += _userSelectedRecord.GetSelectedCount(result) * 10;
+                    }
+                    else
+                    {
+                        result.Score = result.Score;
+                    }
                 }
             }
 
-            if (originQuery.RawQuery == _lastQuery.RawQuery)
-            {
-                Results.AddResults(list, metadata.ID);
-            }
+            Results.AddResults(updates);
 
-            if (Results.Visbility != Visibility.Visible && list.Count > 0)
+            if (Results.Visbility != Visibility.Visible && Results.Count > 0)
             {
                 Results.Visbility = Visibility.Visible;
             }

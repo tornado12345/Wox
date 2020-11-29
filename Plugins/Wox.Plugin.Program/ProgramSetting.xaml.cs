@@ -2,7 +2,6 @@
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
-using Wox.Plugin.Program.Programs;
 
 namespace Wox.Plugin.Program
 {
@@ -25,6 +24,7 @@ namespace Wox.Plugin.Program
         private void Setting_Loaded(object sender, RoutedEventArgs e)
         {
             programSourceView.ItemsSource = _settings.ProgramSources;
+            programIgnoreView.ItemsSource = _settings.IgnoredSequence;
             StartMenuEnabled.IsChecked = _settings.EnableStartMenuSource;
             RegistryEnabled.IsChecked = _settings.EnableRegistrySource;
         }
@@ -42,7 +42,7 @@ namespace Wox.Plugin.Program
 
         private void btnAddProgramSource_OnClick(object sender, RoutedEventArgs e)
         {
-            var add = new AddProgramSource(context, _settings);
+            var add = new AddProgramSource(_settings);
             if(add.ShowDialog() ?? false)
             {
                 ReIndexing();
@@ -51,7 +51,7 @@ namespace Wox.Plugin.Program
 
         private void btnDeleteProgramSource_OnClick(object sender, RoutedEventArgs e)
         {
-            var selectedProgramSource = programSourceView.SelectedItem as Settings.ProgramSource;
+            ProgramSource selectedProgramSource = programSourceView.SelectedItem as ProgramSource;
             if (selectedProgramSource != null)
             {
                 string msg = string.Format(context.API.GetTranslation("wox_plugin_program_delete_program_source"), selectedProgramSource.Location);
@@ -71,7 +71,7 @@ namespace Wox.Plugin.Program
 
         private void btnEditProgramSource_OnClick(object sender, RoutedEventArgs e)
         {
-            var selectedProgramSource = programSourceView.SelectedItem as Settings.ProgramSource;
+            ProgramSource selectedProgramSource = programSourceView.SelectedItem as ProgramSource;
             if (selectedProgramSource != null)
             {
                 var add = new AddProgramSource(selectedProgramSource, _settings);
@@ -120,9 +120,11 @@ namespace Wox.Plugin.Program
                 {
                     if (Directory.Exists(s))
                     {
-                        _settings.ProgramSources.Add(new Settings.ProgramSource
+                        _settings.ProgramSources.Add(new ProgramSource
                         {
-                            Location = s
+                            Location = s,
+                            Type = "FileSystemProgramSource",
+                            Enabled = true
                         });
 
                         ReIndexing();
@@ -141,6 +143,46 @@ namespace Wox.Plugin.Program
         {
             _settings.EnableRegistrySource = RegistryEnabled.IsChecked ?? false;
             ReIndexing();
+        }
+
+        private void btnDeleteIgnored_OnClick(object sender, RoutedEventArgs e)
+        {
+            IgnoredEntry selectedIgnoredEntry = programIgnoreView.SelectedItem as IgnoredEntry;
+            if (selectedIgnoredEntry != null)
+            {
+                string msg = string.Format(context.API.GetTranslation("wox_plugin_program_delete_ignored"), selectedIgnoredEntry);
+
+                if (MessageBox.Show(msg, string.Empty, MessageBoxButton.YesNo) == MessageBoxResult.Yes)
+                {
+                    _settings.IgnoredSequence.Remove(selectedIgnoredEntry);
+                    programIgnoreView.Items.Refresh();
+                }
+            }
+            else
+            {
+                string msg = context.API.GetTranslation("wox_plugin_program_pls_select_ignored");
+                MessageBox.Show(msg);
+            }
+        }
+
+        private void btnEditIgnored_OnClick(object sender, RoutedEventArgs e)
+        {
+            IgnoredEntry selectedIgnoredEntry = programIgnoreView.SelectedItem as IgnoredEntry;
+            if (selectedIgnoredEntry != null)
+            {
+                new AddIgnored(selectedIgnoredEntry, _settings).ShowDialog();
+                programIgnoreView.Items.Refresh();
+            }
+            else
+            {
+                string msg = context.API.GetTranslation("wox_plugin_program_pls_select_ignored");
+                MessageBox.Show(msg);
+            }
+        }
+        private void btnAddIgnored_OnClick(object sender, RoutedEventArgs e)
+        {
+            new AddIgnored(_settings).ShowDialog();
+            programIgnoreView.Items.Refresh();
         }
     }
 }

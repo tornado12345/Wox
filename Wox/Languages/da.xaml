@@ -26,6 +26,7 @@
     <system:String x:Key="ignoreHotkeysOnFullscreen">Ignorer genvejstaster i fuldskærmsmode</system:String>
     <system:String x:Key="pythonDirectory">Python bibliotek</system:String>
     <system:String x:Key="autoUpdates">Autoopdatering</system:String>
+    <system:String x:Key="updateToPrereleases">Update to Prereleases</system:String>
     <system:String x:Key="selectPythonDirectory">Vælg</system:String>
     <system:String x:Key="hideOnStartup">Skjul Wox ved opstart</system:String>
 
@@ -45,6 +46,7 @@
     <system:String x:Key="helloWox">Hej Wox</system:String>
     <system:String x:Key="queryBoxFont">Søgefelt skrifttype</system:String>
     <system:String x:Key="resultItemFont">Resultat skrifttype</system:String>
+    <system:String x:Key="resultItemHighlightFont">Result Item Highlight Font</system:String>
     <system:String x:Key="windowMode">Vindue mode</system:String>
     <system:String x:Key="opacity">Gennemsigtighed</system:String>
 
@@ -91,7 +93,7 @@
     <system:String x:Key="cannotFindSpecifiedPlugin">Kan ikke finde det valgte plugin</system:String>
     <system:String x:Key="newActionKeywordsCannotBeEmpty">Nyt nøgleord må ikke være tomt</system:String>
     <system:String x:Key="newActionKeywordsHasBeenAssigned">Nyt nøgleord er tilknyttet et andet plugin, tilknyt venligst et andet nyt nøgeleord</system:String>
-    <system:String x:Key="succeed">Fortsæt</system:String>
+    <system:String x:Key="success">Fortsæt</system:String>
     <system:String x:Key="actionkeyword_tips">Brug * hvis du ikke vil angive et nøgleord</system:String>
 
     <!--Custom Query Hotkey Dialog-->

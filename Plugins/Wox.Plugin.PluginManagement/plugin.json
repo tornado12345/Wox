@@ -3,10 +3,10 @@
     "ActionKeyword":"wpm",
     "Name":"Wox Plugin Management",
     "Description":"Install/Remove/Update wox plugins",
-    "Author":"qianlifeng",
+    "Author":"Wox",
     "Version":"1.0",
     "Language":"csharp",
-    "Website":"http://www.wox.one/plugin",
+    "Website":"https://github.com/Wox-launcher/Wox",
     "ExecuteFileName":"Wox.Plugin.PluginManagement.dll",
     "IcoPath":"Images\\plugin.png"
 }

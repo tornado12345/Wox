@@ -4,7 +4,9 @@ using System.Reflection;
 using System.Runtime.Serialization;
 using System.Runtime.Serialization.Formatters;
 using System.Runtime.Serialization.Formatters.Binary;
+using NLog;
 using Wox.Infrastructure.Logger;
+using Wox.Infrastructure.UserSettings;
 
 namespace Wox.Infrastructure.Storage
 {
@@ -14,10 +16,13 @@ namespace Wox.Infrastructure.Storage
     /// </summary>
     public class BinaryStorage<T>
     {
+
+        private static readonly NLog.Logger Logger = LogManager.GetCurrentClassLogger();
+
         public BinaryStorage(string filename)
         {
             const string directoryName = "Cache";
-            var directoryPath = Path.Combine(Constant.DataDirectory, directoryName);
+            var directoryPath = Path.Combine(DataLocation.DataDirectory(), directoryName);
             Helper.ValidateDirectory(directoryPath);
 
             const string fileSuffix = ".cache";
@@ -32,7 +37,7 @@ namespace Wox.Infrastructure.Storage
             {
                 if (new FileInfo(FilePath).Length == 0)
                 {
-                    Log.Error($"|BinaryStorage.TryLoad|Zero length cache file <{FilePath}>");
+                    Logger.WoxError($"Zero length cache file <{FilePath}>");
                     Save(defaultData);
                     return defaultData;
                 }
@@ -45,7 +50,7 @@ namespace Wox.Infrastructure.Storage
             }
             else
             {
-                Log.Info("|BinaryStorage.TryLoad|Cache file not exist, load default data");
+                Logger.WoxInfo("Cache file not exist, load default data");
                 Save(defaultData);
                 return defaultData;
             }
@@ -67,7 +72,7 @@ namespace Wox.Infrastructure.Storage
             }
             catch (System.Exception e)
             {
-                Log.Exception($"|BinaryStorage.Deserialize|Deserialize error for file <{FilePath}>", e);
+                Logger.WoxError($"Deserialize error for file <{FilePath}>", e);
                 return defaultData;
             }
             finally
@@ -107,7 +112,7 @@ namespace Wox.Infrastructure.Storage
                 }
                 catch (SerializationException e)
                 {
-                    Log.Exception($"|BinaryStorage.Save|serialize error for file <{FilePath}>", e);
+                    Logger.WoxError($"serialize error for file <{FilePath}>", e);
                 }
             }
         }

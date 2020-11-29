@@ -1,6 +1,10 @@
-﻿using System.Windows;
-using System.Windows.Forms;
-using Wox.Plugin.Program.Programs;
+﻿using System;
+using System.Linq;
+using System.Windows;
+
+using Ookii.Dialogs.Wpf; // may be removed later https://github.com/dotnet/wpf/issues/438
+
+
 
 namespace Wox.Plugin.Program
 {
@@ -10,7 +14,7 @@ namespace Wox.Plugin.Program
     public partial class AddProgramSource
     {
         private PluginInitContext _context;
-        private Settings.ProgramSource _editing;
+        private ProgramSource _editing;
         private Settings _settings;
 
         public AddProgramSource(PluginInitContext context, Settings settings)
@@ -21,7 +25,7 @@ namespace Wox.Plugin.Program
             Directory.Focus();
         }
 
-        public AddProgramSource(Settings.ProgramSource edit, Settings settings)
+        public AddProgramSource(ProgramSource edit, Settings settings)
         {
             _editing = edit;
             _settings = settings;
@@ -32,9 +36,9 @@ namespace Wox.Plugin.Program
 
         private void BrowseButton_Click(object sender, RoutedEventArgs e)
         {
-            var dialog = new FolderBrowserDialog();
-            DialogResult result = dialog.ShowDialog();
-            if (result == System.Windows.Forms.DialogResult.OK)
+            var dialog = new VistaFolderBrowserDialog();
+            var result = dialog.ShowDialog();
+            if (result == true)
             {
                 Directory.Text = dialog.SelectedPath;
             }
@@ -42,7 +46,7 @@ namespace Wox.Plugin.Program
 
         private void ButtonAdd_OnClick(object sender, RoutedEventArgs e)
         {
-            string s = Directory.Text;
+            string s = Environment.ExpandEnvironmentVariables(Directory.Text);
             if (!System.IO.Directory.Exists(s))
             {
                 System.Windows.MessageBox.Show(_context.API.GetTranslation("wox_plugin_program_invalid_path"));
@@ -50,11 +54,12 @@ namespace Wox.Plugin.Program
             }
             if (_editing == null)
             {
-                var source = new Settings.ProgramSource
+                var source = new ProgramSource
                 {
                     Location = Directory.Text,
                 };
-                _settings.ProgramSources.Add(source);
+
+                _settings.ProgramSources.Insert(0, source);
             }
             else
             {

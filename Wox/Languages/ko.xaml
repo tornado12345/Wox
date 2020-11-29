@@ -30,6 +30,7 @@
     <system:String x:Key="ignoreHotkeysOnFullscreen">전체화면 모드에서는 핫키 무시</system:String>
     <system:String x:Key="pythonDirectory">Python 디렉토리</system:String>
     <system:String x:Key="autoUpdates">자동 업데이트</system:String>
+    <system:String x:Key="updateToPrereleases">Update to Prereleases</system:String>
     <system:String x:Key="selectPythonDirectory">선택</system:String>
     <system:String x:Key="hideOnStartup">시작 시 Wox 숨김</system:String>
 
@@ -49,6 +50,7 @@
     <system:String x:Key="helloWox">Hello Wox</system:String>
     <system:String x:Key="queryBoxFont">쿼리 상자 글꼴</system:String>
     <system:String x:Key="resultItemFont">결과 항목 글꼴</system:String>
+    <system:String x:Key="resultItemHighlightFont">Result Item Highlight Font</system:String>
     <system:String x:Key="windowMode">윈도우 모드</system:String>
     <system:String x:Key="opacity">투명도</system:String>
 
@@ -95,7 +97,7 @@
     <system:String x:Key="cannotFindSpecifiedPlugin">플러그인을 찾을 수 없습니다.</system:String>
     <system:String x:Key="newActionKeywordsCannotBeEmpty">새 액션 키워드를 입력하세요.</system:String>
     <system:String x:Key="newActionKeywordsHasBeenAssigned">새 액션 키워드가 할당된 플러그인이 이미 있습니다. 다른 액션 키워드를 입력하세요.</system:String>
-    <system:String x:Key="succeed">성공</system:String>
+    <system:String x:Key="success">성공</system:String>
     <system:String x:Key="actionkeyword_tips">액션 키워드를 지정하지 않으려면 *를 사용하세요.</system:String>
 
     <!--Custom Query Hotkey Dialog-->

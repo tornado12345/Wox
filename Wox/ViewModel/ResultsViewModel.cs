@@ -1,9 +1,16 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Collections.Specialized;
+using System.ComponentModel;
 using System.Linq;
+using System.Threading;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Data;
+using System.Windows.Documents;
+using NLog;
+using Wox.Infrastructure.Logger;
 using Wox.Infrastructure.UserSettings;
 using Wox.Plugin;
 
@@ -15,11 +22,9 @@ namespace Wox.ViewModel
 
         public ResultCollection Results { get; }
 
-        private readonly object _addResultsLock = new object();
-        private readonly object _collectionLock = new object();
         private readonly Settings _settings;
         private int MaxResults => _settings?.MaxResultsToShow ?? 6;
-
+        private readonly object _collectionLock = new object();
         public ResultsViewModel()
         {
             Results = new ResultCollection();
@@ -37,6 +42,8 @@ namespace Wox.ViewModel
             };
         }
 
+        private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
+
         #endregion
 
         #region Properties
@@ -52,20 +59,6 @@ namespace Wox.ViewModel
         #endregion
 
         #region Private Methods
-
-        private int InsertIndexOf(int newScore, IList<ResultViewModel> list)
-        {
-            int index = 0;
-            for (; index < list.Count; index++)
-            {
-                var result = list[index];
-                if (newScore > result.Result.Score)
-                {
-                    break;
-                }
-            }
-            return index;
-        }
 
         private int NewIndex(int i)
         {
@@ -107,143 +100,152 @@ namespace Wox.ViewModel
             SelectedIndex = NewIndex(SelectedIndex - MaxResults);
         }
 
+        public void SelectFirstResult()
+        {
+            SelectedIndex = NewIndex(0);
+        }
+
         public void Clear()
         {
-            Results.Clear();
+            Results.RemoveAll();
         }
 
-        public void RemoveResultsExcept(PluginMetadata metadata)
-        {
-            Results.RemoveAll(r => r.Result.PluginID != metadata.ID);
-        }
+        public int Count => Results.Count;
 
-        public void RemoveResultsFor(PluginMetadata metadata)
+        public void AddResults(List<Result> newRawResults, string resultId)
         {
-            Results.RemoveAll(r => r.Result.PluginID == metadata.ID);
+            CancellationToken token = new CancellationTokenSource().Token;
+            List<ResultsForUpdate> updates = new List<ResultsForUpdate>()
+            {
+                new ResultsForUpdate(newRawResults, resultId, token)
+            };
+            AddResults(updates);
         }
 
         /// <summary>
         /// To avoid deadlock, this method should not called from main thread
         /// </summary>
-        public void AddResults(List<Result> newRawResults, string resultId)
+        public void AddResults(List<ResultsForUpdate> updates)
         {
-            lock (_addResultsLock)
+            var updatesNotCanceled = updates.Where(u => !u.Token.IsCancellationRequested);
+
+            CancellationToken token;
+            try
             {
-                var newResults = NewResults(newRawResults, resultId);
+                token = updates.Select(u => u.Token).Distinct().First();
+            }
+            catch (InvalidOperationException e)
+            {
+                Logger.WoxError("more than one not canceled query result in same batch processing", e);
+                return;
+            }
 
-                // update UI in one run, so it can avoid UI flickering
-                Results.Update(newResults);
+            // https://stackoverflow.com/questions/14336750
+            lock (_collectionLock)
+            {
+                List<ResultViewModel> newResults = NewResults(updates, token);
+                Logger.WoxTrace($"newResults {newResults.Count}");
+                Results.Update(newResults, token);
+            }
 
-                if (Results.Count > 0)
-                {
-                    Margin = new Thickness { Top = 8 };
-                    SelectedIndex = 0;
-                }
-                else
-                {
-                    Margin = new Thickness { Top = 0 };
-                }
+            if (Results.Count > 0)
+            {
+                Margin = new Thickness { Top = 8 };
+                SelectedIndex = 0;
+            }
+            else
+            {
+                Margin = new Thickness { Top = 0 };
             }
         }
 
-        private List<ResultViewModel> NewResults(List<Result> newRawResults, string resultId)
+        private List<ResultViewModel> NewResults(List<ResultsForUpdate> updates, CancellationToken token)
         {
-            var newResults = newRawResults.Select(r => new ResultViewModel(r)).ToList();
-            var results = Results.ToList();
-            var oldResults = results.Where(r => r.Result.PluginID == resultId).ToList();
-
-            // intersection of A (old results) and B (new newResults)
-            var intersection = oldResults.Intersect(newResults).ToList();
-
-            // remove result of relative complement of B in A
-            foreach (var result in oldResults.Except(intersection))
+            if (token.IsCancellationRequested) { return Results.ToList(); }
+            var newResults = Results.ToList();
+            if (updates.Count > 0)
             {
-                results.Remove(result);
-            }
+                if (token.IsCancellationRequested) { return Results.ToList(); }
+                List<Result> resultsFromUpdates = updates.SelectMany(u => u.Results).ToList();
 
-            // update index for result in intersection of A and B
-            foreach (var commonResult in intersection)
+                if (token.IsCancellationRequested) { return Results.ToList(); }
+                newResults.RemoveAll(r => updates.Any(u => u.ID == r.Result.PluginID));
+
+                if (token.IsCancellationRequested) { return Results.ToList(); }
+                IEnumerable<ResultViewModel> vm = resultsFromUpdates.Select(r => new ResultViewModel(r));
+                newResults.AddRange(vm);
+
+                if (token.IsCancellationRequested) { return Results.ToList(); }
+                List<ResultViewModel> sorted = newResults.OrderByDescending(r => r.Result.Score).Take(MaxResults * 4).ToList();
+
+                return sorted;
+            }
+            else
             {
-                int oldIndex = results.IndexOf(commonResult);
-                int oldScore = results[oldIndex].Result.Score;
-                var newResult = newResults[newResults.IndexOf(commonResult)];
-                int newScore = newResult.Result.Score;
-                if (newScore != oldScore)
-                {
-                    var oldResult = results[oldIndex];
-
-                    oldResult.Result.Score = newScore;
-                    oldResult.Result.OriginQuery = newResult.Result.OriginQuery;
-
-                    results.RemoveAt(oldIndex);
-                    int newIndex = InsertIndexOf(newScore, results);
-                    results.Insert(newIndex, oldResult);
-                }
+                return Results.ToList();
             }
-
-            // insert result in relative complement of A in B
-            foreach (var result in newResults.Except(intersection))
-            {
-                int newIndex = InsertIndexOf(result.Result.Score, results);
-                results.Insert(newIndex, result);
-            }
-
-            return results;
         }
-
 
         #endregion
 
-        public class ResultCollection : ObservableCollection<ResultViewModel>
+        #region FormattedText Dependency Property
+        public static readonly DependencyProperty FormattedTextProperty = DependencyProperty.RegisterAttached(
+            "FormattedText",
+            typeof(Inline),
+            typeof(ResultsViewModel),
+            new PropertyMetadata(null, FormattedTextPropertyChanged));
+
+        public static void SetFormattedText(DependencyObject textBlock, IList<int> value)
         {
+            textBlock.SetValue(FormattedTextProperty, value);
+        }
 
-            public void RemoveAll(Predicate<ResultViewModel> predicate)
+        public static Inline GetFormattedText(DependencyObject textBlock)
+        {
+            return (Inline)textBlock.GetValue(FormattedTextProperty);
+        }
+
+        private static void FormattedTextPropertyChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+        {
+            var textBlock = d as TextBlock;
+            if (textBlock == null) return;
+
+            var inline = (Inline)e.NewValue;
+
+            textBlock.Inlines.Clear();
+            if (inline == null) return;
+
+            textBlock.Inlines.Add(inline);
+        }
+        #endregion
+
+        public class ResultCollection : Collection<ResultViewModel>, INotifyCollectionChanged
+        {
+            public event NotifyCollectionChangedEventHandler CollectionChanged;
+
+            public void RemoveAll()
             {
-                CheckReentrancy();
-
-                for (int i = Count - 1; i >= 0; i--)
+                this.Clear();
+                if (CollectionChanged != null)
                 {
-                    if (predicate(this[i]))
-                    {
-                        RemoveAt(i);
-                    }
+                    CollectionChanged.Invoke(this, new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset));
                 }
             }
 
-            public void Update(List<ResultViewModel> newItems)
+            public void Update(List<ResultViewModel> newItems, CancellationToken token)
             {
-                int newCount = newItems.Count;
-                int oldCount = Items.Count;
-                int location = newCount > oldCount ? oldCount : newCount;
+                if (token.IsCancellationRequested) { return; }
 
-                for (int i = 0; i < location; i++)
+                this.Clear();
+                foreach (var i in newItems)
                 {
-                    ResultViewModel oldResult = this[i];
-                    ResultViewModel newResult = newItems[i];
-                    if (!oldResult.Equals(newResult))
-                    {
-                        this[i] = newResult;
-                    }
-                    else if (oldResult.Result.Score != newResult.Result.Score)
-                    {
-                        this[i].Result.Score = newResult.Result.Score;
-                    }
+                    if (token.IsCancellationRequested) { break; }
+                    this.Add(i);
                 }
-
-
-                if (newCount >= oldCount)
+                if (CollectionChanged != null)
                 {
-                    for (int i = oldCount; i < newCount; i++)
-                    {
-                        Add(newItems[i]);
-                    }
-                }
-                else
-                {
-                    for (int i = oldCount - 1; i >= newCount; i--)
-                    {
-                        RemoveAt(i);
-                    }
+                    // wpf use directx / double buffered already, so just reset all won't cause ui flickering
+                    CollectionChanged.Invoke(this, new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset));
                 }
             }
         }

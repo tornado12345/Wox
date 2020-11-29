@@ -1,166 +1,127 @@
-﻿using System.Diagnostics;
+using System;
+using System.Diagnostics;
 using System.IO;
 using System.Runtime.CompilerServices;
 using NLog;
 using NLog.Config;
 using NLog.Targets;
+using Sentry;
+using Wox.Infrastructure.Exception;
+using Wox.Infrastructure.UserSettings;
 
 namespace Wox.Infrastructure.Logger
 {
     public static class Log
     {
         public const string DirectoryName = "Logs";
+        public static string CurrentLogDirectory { get; }
+
+        private static string _woxLanguage = "not set";
 
         static Log()
         {
-            var path = Path.Combine(Constant.DataDirectory, DirectoryName, Constant.Version);
-            if (!Directory.Exists(path))
+            CurrentLogDirectory = Path.Combine(DataLocation.DataDirectory(), DirectoryName, Constant.Version);
+            if (!Directory.Exists(CurrentLogDirectory))
             {
-                Directory.CreateDirectory(path);
+                Directory.CreateDirectory(CurrentLogDirectory);
             }
 
             var configuration = new LoggingConfiguration();
-            var target = new FileTarget();
-            configuration.AddTarget("file", target);
-            target.FileName = "${specialfolder:folder=ApplicationData}/" + Constant.Wox + "/" + DirectoryName + "/" +
-                              Constant.Version + "/${shortdate}.txt";
+            var fileTarget = new FileTarget()
+            {
+                FileName = CurrentLogDirectory.Replace(@"\", "/") + "/${shortdate}.txt",
+            };
+            var consoleTarget = new NLog.Targets.ConsoleTarget();
 #if DEBUG
-            var rule = new LoggingRule("*", LogLevel.Debug, target);
+            configuration.AddRule(LogLevel.Debug, LogLevel.Fatal, fileTarget);
 #else
-            var rule = new LoggingRule("*", LogLevel.Info, target);
+            configuration.AddRule(LogLevel.Info, LogLevel.Fatal, fileTarget);
 #endif
-            configuration.LoggingRules.Add(rule);
             LogManager.Configuration = configuration;
         }
 
-        private static void LogFaultyFormat(string message)
-        {
-            var logger = LogManager.GetLogger("FaultyLogger");
-            message = $"Wrong logger message format <{message}>";
-            System.Diagnostics.Debug.WriteLine($"FATAL|{message}");
-            logger.Fatal(message);
-        }
 
-        private static bool FormatValid(string message)
+        public static void WoxTrace(this NLog.Logger logger, string message, [CallerMemberName] string methodName = "")
         {
-            var parts = message.Split('|');
-            var valid = parts.Length == 3 && !string.IsNullOrWhiteSpace(parts[1]) && !string.IsNullOrWhiteSpace(parts[2]);
-            return valid;
-        }
-
-        /// <param name="message">example: "|prefix|unprefixed" </param>
-        public static void Error(string message)
-        {
-            if (FormatValid(message))
+            // need change logging manually to see trace log
+            if (logger.IsTraceEnabled)
             {
-                var parts = message.Split('|');
-                var prefix = parts[1];
-                var unprefixed = parts[2];
-                var logger = LogManager.GetLogger(prefix);
+                Debug.WriteLine($"DEBUG|{logger.Name}|{methodName}|{message}");
+                logger.Trace($"{methodName}|{message}");
+            }
 
-                System.Diagnostics.Debug.WriteLine($"ERROR|{message}");
-                logger.Error(unprefixed);
-            }
-            else
-            {
-                LogFaultyFormat(message);
-            }
         }
 
-        /// <param name="message">example: "|prefix|unprefixed" </param>
-        [MethodImpl(MethodImplOptions.Synchronized)]
-        public static void Exception(string message, System.Exception e)
+        public static void WoxDebug(this NLog.Logger logger, string message, [CallerMemberName] string methodName = "")
         {
+            Debug.WriteLine($"DEBUG|{logger.Name}|{methodName}|{message}");
+            logger.Debug($"{methodName}|{message}");
+        }
+
+
+        public static void WoxInfo(this NLog.Logger logger, string message, [CallerMemberName] string methodName = "")
+        {
+            Debug.WriteLine($"INFO|{logger.Name}|{methodName}|{message}");
+            logger.Info($"{methodName}|{message}");
+        }
+
+        public static void WoxError(this NLog.Logger logger, string message, [CallerMemberName] string methodName = "")
+        {
+            Debug.WriteLine($"ERROR|{logger.Name}|{methodName}|{message}");
+            logger.Error($"{methodName}|{message}");
+        }
+
+        public static void WoxError(
+            this NLog.Logger logger, string message, System.Exception exception, bool throwException = true, bool sendException = true, [CallerMemberName] string methodName = "")
+        {
+            Debug.WriteLine($"ERROR|{logger.Name}|{methodName}|{message}");
+            logger.Error($"{methodName}|{message}|{ExceptionFormatter.FormattedException(exception)}");
+            if (sendException)
+            {
+                SendException(exception);
+            }
+
 #if DEBUG
-            throw e;
-#else
-            if (FormatValid(message))
+            if (throwException)
             {
-                var parts = message.Split('|');
-                var prefix = parts[1];
-                var unprefixed = parts[2];
-                var logger = LogManager.GetLogger(prefix);
-
-                System.Diagnostics.Debug.WriteLine($"ERROR|{message}");
-
-                logger.Error("-------------------------- Begin exception --------------------------");
-                logger.Error(unprefixed);
-
-                do
-                {
-                    logger.Error($"Exception fulle name:\n <{e.GetType().FullName}>");
-                    logger.Error($"Exception message:\n <{e.Message}>");
-                    logger.Error($"Exception stack trace:\n <{e.StackTrace}>");
-                    logger.Error($"Exception source:\n <{e.Source}>");
-                    logger.Error($"Exception target site:\n <{e.TargetSite}>");
-                    logger.Error($"Exception HResult:\n <{e.HResult}>");
-                    e = e.InnerException;
-                } while (e != null);
-
-                logger.Error("-------------------------- End exception --------------------------");
-            }
-            else
-            {
-                LogFaultyFormat(message);
+                throw exception;
             }
 #endif
         }
-        
-        /// <param name="message">example: "|prefix|unprefixed" </param>
-        public static void Debug(string message)
-        {
-            if (FormatValid(message))
-            {
-                var parts = message.Split('|');
-                var prefix = parts[1];
-                var unprefixed = parts[2];
-                var logger = LogManager.GetLogger(prefix);
 
-                System.Diagnostics.Debug.WriteLine($"DEBUG|{message}");
-                logger.Debug(unprefixed);
-            }
-            else
+        public static void updateSettingsInfo(string woxLanguage)
+        {
+            _woxLanguage = woxLanguage;
+
+            SentrySdk.ConfigureScope(scope =>
             {
-                LogFaultyFormat(message);
-            }
+                scope.SetTag("woxLanguage", _woxLanguage);
+            });
         }
 
-        /// <param name="message">example: "|prefix|unprefixed" </param>
-        public static void Info(string message)
+        public static void SendException(System.Exception exception)
         {
-            if (FormatValid(message))
+#if !DEBUG
+            string pluginDiretoryKey = nameof(Plugin.PluginPair.Metadata.PluginDirectory);
+            if (exception.Data.Contains(pluginDiretoryKey))
             {
-                var parts = message.Split('|');
-                var prefix = parts[1];
-                var unprefixed = parts[2];
-                var logger = LogManager.GetLogger(prefix);
+                string pluginDirectory = exception.Data[pluginDiretoryKey] as string;
+                bool debug = pluginDirectory.Contains(@"\Output\Release") || pluginDirectory.Contains(@"\Output\Release");
+                bool thirdParty = !pluginDirectory.Contains(Constant.ProgramDirectory);
+                if (debug || thirdParty)
+                {
+                    return;
+                }
+            }
 
-                System.Diagnostics.Debug.WriteLine($"INFO|{message}");
-                logger.Info(unprefixed);
-            }
-            else
+            SentrySdk.WithScope(scope =>
             {
-                LogFaultyFormat(message);
-            }
+                scope.Level = Sentry.Protocol.SentryLevel.Error;
+                SentrySdk.CaptureException(exception);
+            });
+#endif
         }
 
-        /// <param name="message">example: "|prefix|unprefixed" </param>
-        public static void Warn(string message)
-        {
-            if (FormatValid(message))
-            {
-                var parts = message.Split('|');
-                var prefix = parts[1];
-                var unprefixed = parts[2];
-                var logger = LogManager.GetLogger(prefix);
-
-                System.Diagnostics.Debug.WriteLine($"WARN|{message}");
-                logger.Warn(unprefixed);
-            }
-            else
-            {
-                LogFaultyFormat(message);
-            }
-        }
     }
+
 }

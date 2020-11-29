@@ -1,19 +1,28 @@
-﻿using System;
+using System;
 using System.Diagnostics;
 using System.Threading.Tasks;
-using System.Timers;
 using System.Windows;
+using System.Collections.Generic;
+using System.Threading;
+using System.Globalization;
+
+using CommandLine;
+using NLog;
+
 using Wox.Core;
+using Wox.Core.Configuration;
 using Wox.Core.Plugin;
 using Wox.Core.Resource;
 using Wox.Helper;
 using Wox.Infrastructure;
 using Wox.Infrastructure.Http;
-using Wox.Infrastructure.Image;
+using Wox.Image;
 using Wox.Infrastructure.Logger;
 using Wox.Infrastructure.UserSettings;
 using Wox.ViewModel;
 using Stopwatch = Wox.Infrastructure.Stopwatch;
+using Wox.Infrastructure.Exception;
+using Sentry;
 
 namespace Wox
 {
@@ -22,99 +31,128 @@ namespace Wox
         public static PublicAPIInstance API { get; private set; }
         private const string Unique = "Wox_Unique_Application_Mutex";
         private static bool _disposed;
-        private Settings _settings;
         private MainViewModel _mainVM;
         private SettingWindowViewModel _settingsVM;
+        private readonly Portable _portable = new Portable();
+        private StringMatcher _stringMatcher;
+        private static string _systemLanguage;
+
+        private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
+
+        private class Options
+        {
+            [Option('q', "query", Required = false, HelpText = "Specify text to query on startup.")]
+            public string QueryText { get; set; }
+        }
+
+        private void ParseCommandLineArgs(IList<string> args)
+        {
+            if (args == null)
+                return;
+
+            Parser.Default.ParseArguments<Options>(args)
+                .WithParsed(o =>
+                {
+                    if (o.QueryText != null && _mainVM != null)
+                        _mainVM.ChangeQueryText(o.QueryText);
+                });
+        }
 
         [STAThread]
         public static void Main()
         {
-            if (SingleInstance<App>.InitializeAsFirstInstance(Unique))
+            _systemLanguage = CultureInfo.CurrentUICulture.Name;
+            Thread.CurrentThread.CurrentCulture = CultureInfo.InvariantCulture;
+            Thread.CurrentThread.CurrentUICulture = CultureInfo.InvariantCulture;
+
+            using (ErrorReporting.InitializedSentry(_systemLanguage))
             {
-                using (var application = new App())
+                if (SingleInstance<App>.InitializeAsFirstInstance(Unique))
                 {
-                    application.InitializeComponent();
-                    application.Run();
+                    using (var application = new App())
+                    {
+                        application.InitializeComponent();
+                        application.Run();
+                    }
                 }
             }
         }
 
         private void OnStartup(object sender, StartupEventArgs e)
         {
-            Stopwatch.Normal("|App.OnStartup|Startup cost", () =>
+            Logger.StopWatchNormal("Startup cost", () =>
             {
-                Log.Info("|App.OnStartup|Begin Wox startup ----------------------------------------------------");
-                Log.Info($"|App.OnStartup|Runtime info:{ErrorReporting.RuntimeInfo()}");
                 RegisterAppDomainExceptions();
                 RegisterDispatcherUnhandledException();
 
+                Logger.WoxInfo("Begin Wox startup----------------------------------------------------");
+                Settings.Initialize();
+                ExceptionFormatter.Initialize(_systemLanguage, Settings.Instance.Language);
+                InsertWoxLanguageIntoLog();
+
+                Logger.WoxInfo(ExceptionFormatter.RuntimeInfo());
+
+                _portable.PreStartCleanUpAfterPortabilityUpdate();
+
                 ImageLoader.Initialize();
-                Alphabet.Initialize();
 
-                _settingsVM = new SettingWindowViewModel();
-                _settings = _settingsVM.Settings;
+                _settingsVM = new SettingWindowViewModel(_portable);
 
-                PluginManager.LoadPlugins(_settings.PluginSettings);
-                _mainVM = new MainViewModel(_settings);
-                var window = new MainWindow(_settings, _mainVM);
+                _stringMatcher = new StringMatcher();
+                StringMatcher.Instance = _stringMatcher;
+                _stringMatcher.UserSettingSearchPrecision = Settings.Instance.QuerySearchPrecision;
+
+                PluginManager.LoadPlugins(Settings.Instance.PluginSettings);
+                _mainVM = new MainViewModel();
+                var window = new MainWindow(_mainVM);
                 API = new PublicAPIInstance(_settingsVM, _mainVM);
                 PluginManager.InitializePlugins(API);
-                Log.Info($"|App.OnStartup|Dependencies Info:{ErrorReporting.DependenciesInfo()}");
 
                 Current.MainWindow = window;
                 Current.MainWindow.Title = Constant.Wox;
 
-                // happlebao todo temp fix for instance code logic
+                // todo temp fix for instance code logic
                 // load plugin before change language, because plugin language also needs be changed
-                InternationalizationManager.Instance.Settings = _settings;
-                InternationalizationManager.Instance.ChangeLanguage(_settings.Language);
+                InternationalizationManager.Instance.Settings = Settings.Instance;
+                InternationalizationManager.Instance.ChangeLanguage(Settings.Instance.Language);
                 // main windows needs initialized before theme change because of blur settigns
-                ThemeManager.Instance.Settings = _settings;
-                ThemeManager.Instance.ChangeTheme(_settings.Theme);
+                ThemeManager.Instance.ChangeTheme(Settings.Instance.Theme);
 
-                Http.Proxy = _settings.Proxy;
+                Http.Proxy = Settings.Instance.Proxy;
 
                 RegisterExitEvents();
 
                 AutoStartup();
-                AutoUpdates();
 
-                _mainVM.MainWindowVisibility = _settings.HideOnStartup ? Visibility.Hidden : Visibility.Visible;
-                Log.Info("|App.OnStartup|End Wox startup ----------------------------------------------------  ");
+                ParseCommandLineArgs(SingleInstance<App>.CommandLineArgs);
+                _mainVM.MainWindowVisibility = Settings.Instance.HideOnStartup ? Visibility.Hidden : Visibility.Visible;
+
+                Logger.WoxInfo($"SDK Info: {ExceptionFormatter.SDKInfo()}");
+                Logger.WoxInfo("End Wox startup ----------------------------------------------------  ");
             });
         }
 
+        private static void InsertWoxLanguageIntoLog()
+        {
+            Log.updateSettingsInfo(Settings.Instance.Language);
+            Settings.Instance.PropertyChanged += (s, ev) =>
+            {
+                if (ev.PropertyName == nameof(Settings.Instance.Language))
+                {
+                    Log.updateSettingsInfo(Settings.Instance.Language);
+                }
+            };
+        }
 
         private void AutoStartup()
         {
-            if (_settings.StartWoxOnSystemStartup)
+            if (Settings.Instance.StartWoxOnSystemStartup)
             {
                 if (!SettingWindow.StartupSet())
                 {
                     SettingWindow.SetStartup();
                 }
             }
-        }
-
-        //[Conditional("RELEASE")]
-        private void AutoUpdates()
-        {
-            Task.Run(async () =>
-            {
-                if (_settings.AutoUpdates)
-                {
-                    // check udpate every 5 hours
-                    var timer = new Timer(1000 * 60 * 60 * 5);
-                    timer.Elapsed += async (s, e) =>
-                    {
-                        await Updater.UpdateApp();
-                    };
-                    timer.Start();
-
-                    // check updates on startup
-                    await Updater.UpdateApp();
-                }
-            });
         }
 
         private void RegisterExitEvents()
@@ -127,7 +165,7 @@ namespace Wox
         /// <summary>
         /// let exception throw as normal is better for Debug
         /// </summary>
-        [Conditional("RELEASE")]
+        //[Conditional("RELEASE")]
         private void RegisterDispatcherUnhandledException()
         {
             DispatcherUnhandledException += ErrorReporting.DispatcherUnhandledException;
@@ -137,35 +175,31 @@ namespace Wox
         /// <summary>
         /// let exception throw as normal is better for Debug
         /// </summary>
-        [Conditional("RELEASE")]
+        //[Conditional("RELEASE")]
         private static void RegisterAppDomainExceptions()
         {
-            AppDomain.CurrentDomain.UnhandledException += ErrorReporting.UnhandledExceptionHandle;
-            AppDomain.CurrentDomain.FirstChanceException += (_, e) =>
-            {
-                Log.Exception("|App.RegisterAppDomainExceptions|First Chance Exception:", e.Exception);
-            };
+            AppDomain.CurrentDomain.UnhandledException += ErrorReporting.UnhandledExceptionHandleMain;
         }
 
         public void Dispose()
         {
+            Logger.WoxInfo("Wox Start Displose");
             // if sessionending is called, exit proverbially be called when log off / shutdown
             // but if sessionending is not called, exit won't be called when log off / shutdown
             if (!_disposed)
             {
-                _mainVM.Save();
-                _settingsVM.Save();
-
-                PluginManager.Save();
-                ImageLoader.Save();
-                Alphabet.Save();
-
+                API?.SaveAppAllSettings();
                 _disposed = true;
+                // todo temp fix to exist application
+                // should notify child thread programmaly
+                Environment.Exit(0);
             }
+            Logger.WoxInfo("Wox End Displose");
         }
 
-        public void OnSecondAppStarted()
+        public void OnSecondAppStarted(IList<string> args)
         {
+            ParseCommandLineArgs(args);
             Current.MainWindow.Visibility = Visibility.Visible;
         }
     }

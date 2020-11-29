@@ -3,10 +3,10 @@
     "ActionKeyword":"*",
     "Name":"Program",
     "Description":"Search programs in Wox",
-    "Author":"qianlifeng",
+    "Author":"Wox",
     "Version":"1.0.0",
     "Language":"csharp",
-    "Website":"http://www.wox.one/plugin",
+    "Website":"https://github.com/Wox-launcher/Wox",
     "ExecuteFileName":"Wox.Plugin.Program.dll",
     "IcoPath":"Images\\program.png"
 }

@@ -10,16 +10,17 @@ namespace Wox.Plugin.ControlPanel
         public string InfoTip { get; private set; }
         public string GUID { get; private set; }
         public ProcessStartInfo ExecutablePath { get; private set; }
-        public Icon Icon { get; private set; }
+        public string IconPath { get; private set; }
         public int Score { get; set; }
 
-        public ControlPanelItem(string newLocalizedString, string newInfoTip, string newGUID, ProcessStartInfo newExecutablePath, Icon newIcon)
+        public ControlPanelItem(string newLocalizedString, string newInfoTip, string newGUID, ProcessStartInfo newExecutablePath, string iconPath)
         {
             LocalizedString = newLocalizedString;
             InfoTip = newInfoTip;
             ExecutablePath = newExecutablePath;
-            Icon = newIcon;
             GUID = newGUID;
+            string key = "EmbededIcon:";
+            IconPath = $"{key}{iconPath}";
         }
     }
 }

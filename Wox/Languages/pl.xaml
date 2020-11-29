@@ -26,6 +26,7 @@
     <system:String x:Key="ignoreHotkeysOnFullscreen">Ignoruj skróty klawiszowe w trybie pełnego ekranu</system:String>
     <system:String x:Key="pythonDirectory">Folder biblioteki Python</system:String>
     <system:String x:Key="autoUpdates">Automatyczne aktualizacje</system:String>
+    <system:String x:Key="updateToPrereleases">Update to Prereleases</system:String>
     <system:String x:Key="selectPythonDirectory">Wybierz</system:String>
     <system:String x:Key="hideOnStartup">Uruchamiaj Wox zminimalizowany</system:String>
 
@@ -45,6 +46,7 @@
     <system:String x:Key="helloWox">Witaj Wox</system:String>
     <system:String x:Key="queryBoxFont">Czcionka okna zapytania</system:String>
     <system:String x:Key="resultItemFont">Czcionka okna wyników</system:String>
+    <system:String x:Key="resultItemHighlightFont">Result Item Highlight Font</system:String>
     <system:String x:Key="windowMode">Tryb w oknie</system:String>
     <system:String x:Key="opacity">Przeźroczystość</system:String>
 
@@ -91,7 +93,7 @@
     <system:String x:Key="cannotFindSpecifiedPlugin">Nie można odnaleźć podanej wtyczki</system:String>
     <system:String x:Key="newActionKeywordsCannotBeEmpty">Nowy wyzwalacz nie może być pusty</system:String>
     <system:String x:Key="newActionKeywordsHasBeenAssigned">Ten wyzwalacz został już przypisany do innej wtyczki, musisz podać inny wyzwalacz.</system:String>
-    <system:String x:Key="succeed">Sukces</system:String>
+    <system:String x:Key="success">Sukces</system:String>
     <system:String x:Key="actionkeyword_tips">Użyj * jeżeli nie chcesz podawać wyzwalacza</system:String>
 
     <!--Custom Query Hotkey Dialog-->
